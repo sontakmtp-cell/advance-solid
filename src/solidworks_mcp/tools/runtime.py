@@ -148,6 +148,22 @@ def format_payload(payload: dict[str, Any], response_format: ResponseFormat | st
     return payload
 
 
+def validation_error_payload(
+    exc: ValidationError, response_format: ResponseFormat | str = ResponseFormat.JSON
+) -> dict[str, Any] | str:
+    return format_payload(
+        error_response(
+            McpCadError(
+                ErrorCode.INVALID_INPUT,
+                "Tool input failed schema validation.",
+                "Fix the fields reported in details and retry.",
+                {"validation_errors": exc.errors()},
+            )
+        ),
+        response_format,
+    )
+
+
 async def run_tool(
     request: Any,
     backend_factory: BackendFactory,
@@ -160,13 +176,8 @@ async def run_tool(
         payload.setdefault("backend", getattr(backend, "name", None))
         return format_payload(payload, getattr(request, "response_format", ResponseFormat.JSON))
     except ValidationError as exc:
-        return error_response(
-            McpCadError(
-                ErrorCode.INVALID_INPUT,
-                "Tool input failed schema validation.",
-                "Fix the fields reported in details and retry.",
-                {"validation_errors": exc.errors()},
-            )
+        return validation_error_payload(
+            exc, getattr(request, "response_format", ResponseFormat.JSON)
         )
     except Exception as exc:
         response_format = getattr(request, "response_format", ResponseFormat.JSON)

@@ -193,8 +193,8 @@ class HeadlessBackend(Backend):
         }
 
     async def open_document(self, path: str, document_type: str | None = None) -> DocumentInfo:
-        runtime = self._load_runtime(required=True)
         source = self._allowed_path(path, must_exist=True)
+        runtime = self._load_runtime(required=True)
         ext = source.suffix.lower().lstrip(".")
         if ext not in SUPPORTED_IMPORTS:
             raise unsupported(
@@ -304,9 +304,9 @@ class HeadlessBackend(Backend):
     async def export_document(
         self, path: str, format: str, options: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        target = self._allowed_path(path)
         runtime = self._load_runtime(required=True)
         document = self._require_document()
-        target = self._allowed_path(path)
         export_format = (format or target.suffix.lstrip(".")).lower()
         if export_format not in SUPPORTED_EXPORTS:
             raise unsupported(

@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import ValidationError
+
 from solidworks_mcp.core.errors import ErrorCode, McpCadError
 from solidworks_mcp.schemas.documents import (
     BackendSelectInput,
@@ -30,7 +32,12 @@ from solidworks_mcp.schemas.properties import (
     MaterialInput,
     SetCustomPropertiesInput,
 )
-from solidworks_mcp.tools.runtime import BackendFactory, call_optional_backend_method, run_tool
+from solidworks_mcp.tools.runtime import (
+    BackendFactory,
+    call_optional_backend_method,
+    run_tool,
+    validation_error_payload,
+)
 
 
 @dataclass(frozen=True)
@@ -331,13 +338,16 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         options: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = ExportDocumentInput(
-            backend=backend,
-            path=path,
-            format=format,
-            options=options or {},
-            response_format=response_format,
-        )
+        try:
+            request = ExportDocumentInput(
+                backend=backend,
+                path=path,
+                format=format,
+                options=options or {},
+                response_format=response_format,
+            )
+        except ValidationError as exc:
+            return validation_error_payload(exc, response_format)
         return await run_tool(
             request,
             backend_factory,

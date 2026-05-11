@@ -115,9 +115,11 @@ class SolidWorksComDispatcher:
     ) -> Any:
         self.start()
         timeout = timeout_seconds or self.settings.com_timeout_seconds
+        retry_delay = min(0.35, timeout / (retry_attempts + 2)) if retry_attempts >= 0 else 0.35
         options = ComCallOptions(
             timeout_seconds=timeout,
             retry_attempts=retry_attempts,
+            retry_delay_seconds=retry_delay,
             hard_timeout_seconds=self.settings.com_hard_timeout_seconds,
         )
         result_queue: "queue.Queue[tuple[bool, Any]]" = queue.Queue(maxsize=1)
