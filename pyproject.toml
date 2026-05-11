@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solidworks-mcp"
+version = "0.1.0"
+description = "Agent-centric MCP server for SolidWorks and headless CAD workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SolidWorks MCP Contributors" }]
+dependencies = [
+  "mcp>=1.9.0",
+  "pydantic>=2.7",
+  "typing-extensions>=4.10",
+]
+
+[project.optional-dependencies]
+solidworks = [
+  "pywin32>=306; platform_system == 'Windows'",
+  "comtypes>=1.2; platform_system == 'Windows'",
+]
+headless = [
+  "cadquery>=2.4",
+]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+solidworks-mcp = "solidworks_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/solidworks_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+

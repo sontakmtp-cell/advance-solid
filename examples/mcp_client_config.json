@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "solidworks": {
+      "command": "python",
+      "args": [
+        "-m",
+        "solidworks_mcp.server"
+      ],
+      "env": {
+        "SOLIDWORKS_MCP_BACKEND": "solidworks",
+        "SOLIDWORKS_MCP_WORKSPACE_ROOTS": "H:\\MCP-AutoCAD;H:\\CAD-Work",
+        "SOLIDWORKS_MCP_ALLOW_MACROS": "false",
+        "SOLIDWORKS_MCP_COM_TIMEOUT": "30",
+        "SOLIDWORKS_MCP_COM_HARD_TIMEOUT": "120"
+      }
+    },
+    "solidworks-headless": {
+      "command": "python",
+      "args": [
+        "-m",
+        "solidworks_mcp.server"
+      ],
+      "env": {
+        "SOLIDWORKS_MCP_BACKEND": "headless",
+        "SOLIDWORKS_MCP_WORKSPACE_ROOTS": "H:\\MCP-AutoCAD"
+      }
+    }
+  }
+}
+

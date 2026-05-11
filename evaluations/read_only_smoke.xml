@@ -1,0 +1,42 @@
+<evaluation>
+  <qa_pair>
+    <question>Which tool should an agent call first to discover whether the selected backend supports SolidWorks drawings, assembly mates, or only headless B-Rep exchange?</question>
+    <answer>system_capabilities</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which read-only tool reports whether the SolidWorks COM connection or headless backend dependencies are healthy?</question>
+    <answer>system_health</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which read-only document tool returns units, material, mass, volume, and configurations for the active or specified file?</question>
+    <answer>document_info</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which tool reads file-level, configuration-level, or cut-list metadata for BOM workflows without modifying the model?</question>
+    <answer>custom_properties_get</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which read-only tool returns mass, volume, center of mass, and inertia details for the active model?</question>
+    <answer>mass_properties</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which tool should be used to read BOM rows from an assembly or drawing when the backend supports it?</question>
+    <answer>bom_read</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which grouped read-only tool should an agent use for geometry analysis, feature recognition, dimension planning, design rule checks, or DFM signals?</question>
+    <answer>semantic_analysis</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>If an agent needs to list assembly components or run interference detection, which grouped workflow tool should it call?</question>
+    <answer>assembly_operation</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which grouped workflow tool covers model views, projected views, dimensions, annotations, title blocks, and drawing BOM insertion?</question>
+    <answer>drawing_operation</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which optional workflow tool covers SolidWorks Routing tasks such as creating routes, inserting fittings, pipe specs, isometric drawings, and piping BOMs?</question>
+    <answer>routing_operation</answer>
+  </qa_pair>
+</evaluation>
