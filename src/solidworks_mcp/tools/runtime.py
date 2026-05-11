@@ -101,15 +101,21 @@ BackendFactory = Callable[[str], Backend]
 
 def default_backend_factory(settings: Settings | None = None) -> BackendFactory:
     settings = settings or load_settings()
+    cache: dict[str, Backend] = {}
 
     def create(backend_name: str) -> Backend:
         selected = settings.backend if backend_name == "auto" else backend_name
+        cached = cache.get(selected)
+        if cached is not None:
+            return cached
         try:
             from solidworks_mcp.core.factory import create_backend
 
-            return create_backend(selected, settings=settings)
+            backend = create_backend(selected, settings=settings)
         except Exception as exc:  # pragma: no cover - depends on optional backend modules/deps.
-            return UnavailableBackend(selected, str(exc))
+            backend = UnavailableBackend(selected, str(exc))
+        cache[selected] = backend
+        return backend
 
     return create
 
