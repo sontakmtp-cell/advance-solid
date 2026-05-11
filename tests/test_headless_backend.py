@@ -93,6 +93,7 @@ async def test_health_reports_missing_cadquery_without_raising(monkeypatch, tmp_
         return real_import_module(name)
 
     monkeypatch.setattr(importlib, "import_module", missing_import)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "cadquery" else object())
     backend = HeadlessBackend(Settings(workspace_roots=[tmp_path]))
 
     result = await backend.health()

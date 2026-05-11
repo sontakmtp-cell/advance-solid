@@ -56,13 +56,12 @@ class HeadlessBackend(Backend):
         self._document: CadDocument | None = None
 
     async def backend_info(self) -> dict[str, Any]:
-        runtime = self._load_runtime(required=False)
         return {
             "name": self.name,
             "kind": "offline_brep",
             "transport": "in_process_python",
             "dependencies": {
-                "cadquery": bool(runtime),
+                "cadquery": self._module_available("cadquery"),
                 "ocp": self._module_available("OCP"),
             },
             "active_document": (
@@ -171,15 +170,17 @@ class HeadlessBackend(Backend):
         )
 
     async def health(self) -> dict[str, Any]:
-        runtime = self._load_runtime(required=False)
+        cadquery_available = self._module_available("cadquery")
+        ocp_available = self._module_available("OCP")
         return {
-            "ok": bool(runtime),
+            "ok": cadquery_available,
             "backend": self.name,
-            "dependency_status": "available" if runtime else "missing",
+            "dependency_status": "available" if cadquery_available else "missing",
             "dependency_error": self._runtime_error,
             "active_document": self._document is not None,
+            "dependencies": {"cadquery": cadquery_available, "ocp": ocp_available},
             "next_step": None
-            if runtime
+            if cadquery_available
             else "Install the headless extra, for example: pip install 'solidworks-mcp[headless]'.",
         }
 

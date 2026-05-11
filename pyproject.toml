@@ -7,7 +7,7 @@ name = "solidworks-mcp"
 version = "0.1.0"
 description = "Agent-centric MCP server for SolidWorks and headless CAD workflows."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "SolidWorks MCP Contributors" }]
 dependencies = [
@@ -41,5 +41,4 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
-
+target-version = "py312"
