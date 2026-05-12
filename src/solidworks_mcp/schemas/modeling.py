@@ -55,6 +55,7 @@ class DrawingOperationInput(StrictModel):
         "add_dimension",
         "add_annotation",
         "insert_bom",
+        "validate_layout",
         "title_block",
         "sheet_management",
     ]
@@ -85,9 +86,20 @@ class SemanticAnalysisInput(StrictModel):
     response_format: ResponseFormat = ResponseFormat.JSON
 
 
+class PartInspectInput(StrictModel):
+    backend: Literal["auto", "solidworks", "headless"] = "auto"
+    detail: DetailLevel = "detailed"
+    include_features: bool = True
+    include_sub_features: bool = True
+    include_bodies: bool = True
+    include_custom_properties: bool = True
+    feature_limit: int = Field(default=250, ge=1, le=1000)
+    sub_feature_limit: int = Field(default=50, ge=0, le=250)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
 class RoutingOperationInput(StrictModel):
     backend: Literal["auto", "solidworks", "headless"] = "auto"
     operation: Literal["create_route", "insert_fitting", "pipe_spec", "isometric_drawing", "piping_bom"]
     parameters: dict[str, Any] = Field(default_factory=dict)
     response_format: ResponseFormat = ResponseFormat.JSON
-

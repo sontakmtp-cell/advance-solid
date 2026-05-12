@@ -20,6 +20,10 @@
     <answer>mass_properties</answer>
   </qa_pair>
   <qa_pair>
+    <question>Which read-only SolidWorks backend tool should an agent call to inspect the active part's feature tree, bodies, custom properties, material, units, and bounding box in one response?</question>
+    <answer>part_inspect</answer>
+  </qa_pair>
+  <qa_pair>
     <question>Which tool should be used to read BOM rows from an assembly or drawing when the backend supports it?</question>
     <answer>bom_read</answer>
   </qa_pair>
@@ -32,11 +36,47 @@
     <answer>assembly_operation</answer>
   </qa_pair>
   <qa_pair>
+    <question>For a read-only assembly workflow that needs the component hierarchy without changing mates or placements, which assembly_operation operation name should the agent choose?</question>
+    <answer>list_components</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>For a read-only assembly workflow that checks whether components overlap, which assembly_operation operation name should the agent choose?</question>
+    <answer>interference_detection</answer>
+  </qa_pair>
+  <qa_pair>
     <question>Which grouped workflow tool covers model views, projected views, dimensions, annotations, title blocks, and drawing BOM insertion?</question>
     <answer>drawing_operation</answer>
   </qa_pair>
   <qa_pair>
+    <question>When an agent needs to add a drawing view and the backend supports drawings, which drawing_operation operation name should it use?</question>
+    <answer>insert_view</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>When an agent needs to read or update drawing title block fields through the drawing workflow envelope, which drawing_operation operation name should it use?</question>
+    <answer>title_block</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which grouped workflow tool should an agent use to activate a named view, hide a component, create a section view, zoom, or take a viewport screenshot?</question>
+    <answer>appearance_operation</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Which appearance_operation operation name should an agent choose for a read-only viewport capture?</question>
+    <answer>screenshot</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>For a workflow-level file package that collects an assembly and related drawings, which import_export_operation operation name should the agent choose?</question>
+    <answer>pack_and_go</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>For exporting many CAD files to a neutral format in one workflow, which import_export_operation operation name should the agent choose?</question>
+    <answer>batch_export</answer>
+  </qa_pair>
+  <qa_pair>
     <question>Which optional workflow tool covers SolidWorks Routing tasks such as creating routes, inserting fittings, pipe specs, isometric drawings, and piping BOMs?</question>
     <answer>routing_operation</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>If the selected backend lacks a Phase 2 optional method such as drawing_operation or assembly_operation, what error code should the tool response return?</question>
+    <answer>unsupported</answer>
   </qa_pair>
 </evaluation>

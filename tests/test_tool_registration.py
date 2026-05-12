@@ -92,6 +92,10 @@ class FakeBackend(Backend):
         self.record("feature_operation", operation, parameters)
         return {"operation": operation, "accepted": True}
 
+    async def inspect_part(self, **kwargs: Any) -> dict[str, Any]:
+        self.record("inspect_part", **kwargs)
+        return {"title": "Fixture", "document_type": "part", "feature_count": 2}
+
     async def unsupported(self, feature: str) -> dict[str, Any]:
         raise unsupported(feature, self.name)
 
@@ -134,6 +138,7 @@ def test_registers_expected_tool_groups(mcp) -> None:
         "appearance_operation",
         "import_export_operation",
         "semantic_analysis",
+        "part_inspect",
         "routing_operation",
     }
     assert expected.issubset(mcp.tools)
@@ -203,12 +208,209 @@ async def test_roadmap_tool_maps_to_backend_method(fake_backend: FakeBackend, mc
 
 
 @pytest.mark.asyncio
-async def test_unsupported_roadmap_tool_returns_actionable_error(mcp) -> None:
-    result = await mcp.tools["assembly_operation"](operation="list_components")
+async def test_assembly_operation_maps_to_optional_backend_method(
+    fake_backend: FakeBackend, mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def assembly_operation(operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        fake_backend.record("assembly_operation", operation, parameters)
+        return {"operation": operation, "component_count": 3}
+
+    monkeypatch.setattr(fake_backend, "assembly_operation", assembly_operation, raising=False)
+
+    result = await mcp.tools["assembly_operation"](
+        operation="list_components",
+        parameters={"recursive": True, "include_suppressed": False},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["component_count"] == 3
+    assert fake_backend.calls[-1] == (
+        "assembly_operation",
+        ("list_components", {"recursive": True, "include_suppressed": False}),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_drawing_operation_maps_to_optional_backend_method(
+    fake_backend: FakeBackend, mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def drawing_operation(operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        fake_backend.record("drawing_operation", operation, parameters)
+        return {"operation": operation, "view": parameters.get("view")}
+
+    monkeypatch.setattr(fake_backend, "drawing_operation", drawing_operation, raising=False)
+
+    result = await mcp.tools["drawing_operation"](
+        operation="insert_view",
+        parameters={"model_path": "H:\\CAD-Work\\bracket.SLDPRT", "view": "front"},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["view"] == "front"
+    assert fake_backend.calls[-1] == (
+        "drawing_operation",
+        ("insert_view", {"model_path": "H:\\CAD-Work\\bracket.SLDPRT", "view": "front"}),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_appearance_operation_maps_to_optional_backend_method(
+    fake_backend: FakeBackend, mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def appearance_operation(operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        fake_backend.record("appearance_operation", operation, parameters)
+        return {"operation": operation, "activated": parameters.get("activate", False)}
+
+    monkeypatch.setattr(fake_backend, "appearance_operation", appearance_operation, raising=False)
+
+    result = await mcp.tools["appearance_operation"](
+        operation="named_view",
+        parameters={"name": "isometric", "activate": True},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["activated"] is True
+    assert fake_backend.calls[-1] == (
+        "appearance_operation",
+        ("named_view", {"name": "isometric", "activate": True}),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_export_operation_maps_to_optional_backend_method(
+    fake_backend: FakeBackend, mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def import_export_operation(operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        fake_backend.record("import_export_operation", operation, parameters)
+        return {"operation": operation, "queued": 2}
+
+    monkeypatch.setattr(fake_backend, "import_export_operation", import_export_operation, raising=False)
+
+    result = await mcp.tools["import_export_operation"](
+        operation="batch_export",
+        parameters={"format": "step", "destination": "H:\\CAD-Work\\exchange"},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["queued"] == 2
+    assert fake_backend.calls[-1] == (
+        "import_export_operation",
+        ("batch_export", {"format": "step", "destination": "H:\\CAD-Work\\exchange"}),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_part_inspect_maps_to_backend_method(fake_backend: FakeBackend, mcp) -> None:
+    result = await mcp.tools["part_inspect"](
+        detail="concise",
+        include_bodies=False,
+        feature_limit=25,
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["feature_count"] == 2
+    assert fake_backend.calls[-1] == (
+        "inspect_part",
+        (),
+        {
+            "detail": "concise",
+            "include_features": True,
+            "include_sub_features": True,
+            "include_bodies": False,
+            "include_custom_properties": True,
+            "feature_limit": 25,
+            "sub_feature_limit": 50,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_semantic_analysis_maps_to_optional_backend_method(
+    fake_backend: FakeBackend, mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def semantic_analysis(
+        analysis: str,
+        detail: str,
+        parameters: dict[str, Any],
+    ) -> dict[str, Any]:
+        fake_backend.record("semantic_analysis", analysis, detail, parameters)
+        return {"analysis": analysis, "score": 80}
+
+    monkeypatch.setattr(fake_backend, "semantic_analysis", semantic_analysis, raising=False)
+
+    result = await mcp.tools["semantic_analysis"](
+        analysis="dfm",
+        detail="concise",
+        parameters={"min_wall_thickness": 1.5},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["score"] == 80
+    assert fake_backend.calls[-1] == (
+        "semantic_analysis",
+        ("dfm", "concise", {"min_wall_thickness": 1.5}),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_routing_operation_maps_to_optional_backend_method(
+    fake_backend: FakeBackend, mcp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def routing_operation(operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        fake_backend.record("routing_operation", operation, parameters)
+        return {"operation": operation, "status": "planned"}
+
+    monkeypatch.setattr(fake_backend, "routing_operation", routing_operation, raising=False)
+
+    result = await mcp.tools["routing_operation"](
+        operation="pipe_spec",
+        parameters={"spec": "CS150"},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["status"] == "planned"
+    assert fake_backend.calls[-1] == (
+        "routing_operation",
+        ("pipe_spec", {"spec": "CS150"}),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "operation"),
+    [
+        ("assembly_operation", "list_components"),
+        ("drawing_operation", "insert_view"),
+        ("appearance_operation", "named_view"),
+        ("import_export_operation", "batch_export"),
+        ("semantic_analysis", "geometry"),
+        ("routing_operation", "piping_bom"),
+    ],
+)
+async def test_unsupported_optional_backend_tool_returns_actionable_error(
+    mcp, tool_name: str, operation: str
+) -> None:
+    kwargs = {"analysis": operation} if tool_name == "semantic_analysis" else {"operation": operation}
+    result = await mcp.tools[tool_name](**kwargs)
 
     assert result["ok"] is False
     assert result["error"]["code"] == "unsupported"
-    assert "Switch to the solidworks backend" in result["error"]["next_step"]
+    assert result["error"]["next_step"]
+
+
+@pytest.mark.asyncio
+async def test_grouped_tool_validation_error_is_actionable(mcp) -> None:
+    result = await mcp.tools["drawing_operation"](operation="not_a_drawing_operation")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_input"
+    assert result["error"]["details"]["validation_errors"]
 
 
 @pytest.mark.asyncio

@@ -166,6 +166,30 @@ class HeadlessBackend(Backend):
                         ),
                     ),
                 },
+                "semantic": {
+                    "geometry": Capability(supported=True, level="partial"),
+                    "feature_recognition": Capability(
+                        supported=True,
+                        level="partial",
+                        notes="Heuristic recognition from B-Rep counts and operation metadata.",
+                    ),
+                    "manufacturing_method": Capability(supported=True, level="partial"),
+                    "dimension_plan": Capability(
+                        supported=True,
+                        level="partial",
+                        notes="Bounding-box dimension plan only.",
+                    ),
+                    "dimension_layout_score": Capability(supported=True, level="partial"),
+                    "design_rule_check": Capability(supported=True, level="partial"),
+                    "dfm": Capability(supported=True, level="partial"),
+                },
+                "routing": {
+                    "piping": Capability(
+                        supported=False,
+                        level="unsupported",
+                        next_step="Switch to the solidworks backend with the Routing add-in enabled.",
+                    ),
+                },
             },
         )
 
@@ -421,6 +445,213 @@ class HeadlessBackend(Backend):
                 "SolidWorks appearances are unsupported."
             ),
         }
+
+    async def feature_operation(self, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        """Run offline feature-like B-Rep operations exposed through the grouped MCP tool."""
+
+        if operation == "create_sketch":
+            primitive = str(parameters.get("primitive") or parameters.get("type") or "").lower()
+            if primitive in {"box", "cylinder", "sphere"}:
+                return await self.create_primitive(primitive, parameters)
+            profile = parameters.get("profile")
+            distance = parameters.get("distance")
+            if isinstance(profile, dict) and distance is not None:
+                return await self.extrude(profile, float(distance))
+            raise McpCadError(
+                ErrorCode.INVALID_INPUT,
+                "Headless create_sketch needs either a primitive or an extrudable profile.",
+                "Pass primitive='box'/'cylinder'/'sphere' with dimensions, or pass "
+                "profile={'type':'rectangle'|'circle', ...} and distance.",
+                {"operation": operation, "parameters": parameters},
+            )
+        if operation == "extrude_boss":
+            profile = parameters.get("profile")
+            if not isinstance(profile, dict):
+                profile = {key: value for key, value in parameters.items() if key != "distance"}
+            distance = parameters.get("distance")
+            if distance is None:
+                raise McpCadError(
+                    ErrorCode.INVALID_INPUT,
+                    "extrude_boss requires a numeric distance.",
+                    "Pass distance plus a rectangle or circle profile.",
+                    {"parameters": parameters},
+                )
+            return await self.extrude(profile, float(distance))
+        if operation == "fillet":
+            radius = parameters.get("radius")
+            if radius is None:
+                raise McpCadError(
+                    ErrorCode.INVALID_INPUT,
+                    "fillet requires a radius.",
+                    "Pass radius and optionally selector, for example {'radius': 1.0, 'selector': '|Z'}.",
+                )
+            return await self.fillet(float(radius), str(parameters.get("selector", "|Z")))
+        if operation == "chamfer":
+            distance = parameters.get("distance")
+            if distance is None:
+                raise McpCadError(
+                    ErrorCode.INVALID_INPUT,
+                    "chamfer requires a distance.",
+                    "Pass distance and optionally selector, for example {'distance': 1.0, 'selector': '|Z'}.",
+                )
+            return await self.chamfer(float(distance), str(parameters.get("selector", "|Z")))
+        if operation == "extrude_cut":
+            tool_path = parameters.get("tool_path")
+            if tool_path:
+                return await self.boolean("cut", str(tool_path))
+            raise unsupported(
+                "headless extrude_cut without a tool body",
+                self.name,
+                suggestion=(
+                    "Pass tool_path to a STEP/IGES cutting body for boolean cut, "
+                    "or switch to the solidworks backend for sketch-based cuts."
+                ),
+            )
+        if operation in {"pattern", "mirror", "hole", "revolve", "suppress", "unsuppress", "delete", "list_tree"}:
+            raise unsupported(
+                f"feature operation {operation}",
+                self.name,
+                suggestion=(
+                    "Use SolidWorks backend for parametric feature-tree operations, "
+                    "or use headless primitive/extrude/fillet/chamfer/boolean workflows."
+                ),
+            )
+        raise unsupported(f"feature operation {operation}", self.name)
+
+    async def assembly_operation(self, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        raise unsupported(
+            f"assembly operation {operation}",
+            self.name,
+            suggestion="Switch to the solidworks backend for assemblies, components, and mates.",
+        )
+
+    async def drawing_operation(self, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        raise unsupported(
+            f"drawing operation {operation}",
+            self.name,
+            suggestion="Switch to the solidworks backend for SolidWorks drawings and annotations.",
+        )
+
+    async def appearance_operation(self, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        if operation == "zoom":
+            document = self._require_document()
+            return {
+                "ok": True,
+                "backend": self.name,
+                "operation": "zoom",
+                "notes": "Headless mode has no viewport; returned active model bounds instead.",
+                "geometry": self._geometry_summary(document.shape) if document.shape is not None else {},
+            }
+        raise unsupported(
+            f"appearance operation {operation}",
+            self.name,
+            suggestion="Switch to the solidworks backend for viewport, color, show/hide, and screenshots.",
+        )
+
+    async def import_export_operation(self, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        if operation == "import":
+            path = parameters.get("path")
+            if not path:
+                raise McpCadError(
+                    ErrorCode.INVALID_INPUT,
+                    "import requires path.",
+                    "Pass {'path': '<allowlisted STEP/IGES path>'}.",
+                )
+            info = await self.open_document(str(path), parameters.get("document_type"))
+            return {"ok": True, "backend": self.name, "operation": "import", "document": info.model_dump()}
+        if operation == "export":
+            path = parameters.get("path")
+            export_format = parameters.get("format")
+            if not path or not export_format:
+                raise McpCadError(
+                    ErrorCode.INVALID_INPUT,
+                    "export requires path and format.",
+                    "Pass {'path': '<allowlisted target>', 'format': 'step'|'iges'|'stl'}.",
+                )
+            return await self.export_document(
+                str(path),
+                str(export_format),
+                parameters.get("options") if isinstance(parameters.get("options"), dict) else {},
+            )
+        raise unsupported(
+            f"import/export operation {operation}",
+            self.name,
+            suggestion="Use import/export in headless mode; Pack and Go and batch native export require SolidWorks.",
+        )
+
+    async def semantic_analysis(
+        self,
+        analysis: str,
+        detail: str = "concise",
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        parameters = parameters or {}
+        document = self._require_document()
+        geometry = self._geometry_summary(document.shape) if document.shape is not None else {}
+        if analysis == "geometry":
+            return {
+                "ok": True,
+                "backend": self.name,
+                "analysis": analysis,
+                "detail": detail,
+                "geometry": geometry,
+            }
+        if analysis == "feature_recognition":
+            return {
+                "ok": True,
+                "backend": self.name,
+                "analysis": analysis,
+                "features": self._recognized_features(document, geometry),
+                "notes": "Headless recognition is heuristic; use SolidWorks for feature tree intent.",
+            }
+        if analysis == "manufacturing_method":
+            return {
+                "ok": True,
+                "backend": self.name,
+                "analysis": analysis,
+                "recommendations": self._manufacturing_recommendations(document, geometry),
+            }
+        if analysis == "dimension_plan":
+            return {
+                "ok": True,
+                "backend": self.name,
+                "analysis": analysis,
+                "dimension_plan": self._dimension_plan(geometry),
+            }
+        if analysis == "dimension_layout_score":
+            return self._dimension_layout_score(parameters)
+        if analysis == "design_rule_check":
+            return {
+                "ok": True,
+                "backend": self.name,
+                "analysis": analysis,
+                "checks": self._design_rule_checks(geometry, parameters),
+            }
+        if analysis == "dfm":
+            return {
+                "ok": True,
+                "backend": self.name,
+                "analysis": analysis,
+                "geometry": geometry if detail == "detailed" else {"bounding_box": geometry.get("bounding_box")},
+                "features": self._recognized_features(document, geometry),
+                "checks": self._design_rule_checks(geometry, parameters),
+                "recommendations": self._manufacturing_recommendations(document, geometry),
+            }
+        raise unsupported(
+            f"semantic analysis {analysis}",
+            self.name,
+            suggestion="Use geometry, feature_recognition, manufacturing_method, dimension_plan, dimension_layout_score, design_rule_check, or dfm.",
+        )
+
+    async def routing_operation(self, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        raise unsupported(
+            f"routing operation {operation}",
+            self.name,
+            suggestion=(
+                "Routing/Piping requires SolidWorks Routing. Switch to the solidworks "
+                "backend with the Routing add-in/license enabled."
+            ),
+        )
 
     async def create_primitive(self, primitive: str, parameters: dict[str, Any]) -> dict[str, Any]:
         runtime = self._load_runtime(required=True)
@@ -688,6 +919,144 @@ class HeadlessBackend(Backend):
             "units": self._document.units if self._document else "mm",
             "notes": "Mass equals volume because no density model is applied in headless mode.",
         }
+
+    def _recognized_features(self, document: CadDocument, geometry: dict[str, Any]) -> list[dict[str, Any]]:
+        features: list[dict[str, Any]] = []
+        created_by = document.metadata.get("created_by")
+        if created_by:
+            features.append({"type": str(created_by), "confidence": 0.9, "source": "metadata"})
+        primitive = document.metadata.get("primitive")
+        if primitive:
+            features.append({"type": str(primitive), "confidence": 0.95, "source": "metadata"})
+        faces = geometry.get("faces")
+        edges = geometry.get("edges")
+        if faces == 6 and edges == 12:
+            features.append({"type": "box_like_prismatic_body", "confidence": 0.7, "source": "brep_counts"})
+        if geometry.get("solids") == 1 and not features:
+            features.append({"type": "single_solid", "confidence": 0.5, "source": "brep_counts"})
+        return features
+
+    def _manufacturing_recommendations(
+        self,
+        document: CadDocument,
+        geometry: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        bbox = geometry.get("bounding_box") or {}
+        size = self._bbox_size(bbox)
+        recommendations = [
+            {
+                "method": "3_axis_milling",
+                "confidence": 0.55,
+                "reason": "B-Rep is a single prismatic solid; verify setups and hidden undercuts.",
+            }
+        ]
+        if document.metadata.get("created_by") in {"primitive", "extrude"}:
+            recommendations[0]["confidence"] = 0.7
+            recommendations[0]["reason"] = "Model was created from simple primitive/extrude metadata."
+        if size and min(size) < float(geometry.get("volume") or 0.0) ** (1 / 3) * 0.05:
+            recommendations.append(
+                {
+                    "method": "sheet_or_plate_process",
+                    "confidence": 0.45,
+                    "reason": "Bounding box has one axis much thinner than the others.",
+                }
+            )
+        return recommendations
+
+    def _dimension_plan(self, geometry: dict[str, Any]) -> list[dict[str, Any]]:
+        bbox = geometry.get("bounding_box") or {}
+        if not bbox:
+            return []
+        return [
+            {"id": "overall_length", "axis": "x", "value": bbox["xmax"] - bbox["xmin"]},
+            {"id": "overall_width", "axis": "y", "value": bbox["ymax"] - bbox["ymin"]},
+            {"id": "overall_height", "axis": "z", "value": bbox["zmax"] - bbox["zmin"]},
+        ]
+
+    def _dimension_layout_score(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        dimensions = parameters.get("dimensions")
+        if not isinstance(dimensions, list):
+            raise McpCadError(
+                ErrorCode.INVALID_INPUT,
+                "dimension_layout_score requires a dimensions list.",
+                "Pass dimensions as boxes with id, x, y, width, and height.",
+            )
+        boxes = [self._layout_box(item, index) for index, item in enumerate(dimensions)]
+        min_gap = float(parameters.get("min_gap", 0.0))
+        issues: list[dict[str, Any]] = []
+        for index, first in enumerate(boxes):
+            for second in boxes[index + 1 :]:
+                if self._layout_boxes_overlap(first, second, min_gap):
+                    issues.append({"code": "overlap", "items": [first["id"], second["id"]]})
+        return {
+            "ok": True,
+            "backend": self.name,
+            "analysis": "dimension_layout_score",
+            "score": max(0, 100 - 20 * len(issues)),
+            "issues": issues,
+        }
+
+    def _design_rule_checks(
+        self,
+        geometry: dict[str, Any],
+        parameters: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        bbox = geometry.get("bounding_box") or {}
+        size = self._bbox_size(bbox)
+        checks: list[dict[str, Any]] = []
+        min_wall = parameters.get("min_wall_thickness")
+        if size and min_wall is not None:
+            checks.append(
+                {
+                    "rule": "minimum_wall_proxy",
+                    "status": "pass" if min(size) >= float(min_wall) else "warning",
+                    "measured": min(size),
+                    "threshold": float(min_wall),
+                    "next_step": "Use real wall-thickness analysis in SolidWorks for production DFM.",
+                }
+            )
+        checks.append(
+            {
+                "rule": "undercut_detection",
+                "status": "unknown",
+                "next_step": "Headless MVP does not classify undercuts; inspect in SolidWorks for tooling decisions.",
+            }
+        )
+        return checks
+
+    def _bbox_size(self, bbox: dict[str, Any]) -> tuple[float, float, float] | None:
+        try:
+            return (
+                float(bbox["xmax"]) - float(bbox["xmin"]),
+                float(bbox["ymax"]) - float(bbox["ymin"]),
+                float(bbox["zmax"]) - float(bbox["zmin"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _layout_box(self, item: Any, index: int) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise McpCadError(
+                ErrorCode.INVALID_INPUT,
+                f"dimensions[{index}] must be an object.",
+                "Use boxes shaped like {'id': 'D1', 'x': 0.1, 'y': 0.2, 'width': 0.03, 'height': 0.01}.",
+            )
+        return {
+            "id": str(item.get("id") or item.get("name") or f"D{index + 1}"),
+            "x": float(item["x"]),
+            "y": float(item["y"]),
+            "width": float(item["width"]),
+            "height": float(item["height"]),
+        }
+
+    @staticmethod
+    def _layout_boxes_overlap(first: dict[str, Any], second: dict[str, Any], min_gap: float) -> bool:
+        return not (
+            first["x"] + first["width"] + min_gap <= second["x"]
+            or second["x"] + second["width"] + min_gap <= first["x"]
+            or first["y"] + first["height"] + min_gap <= second["y"]
+            or second["y"] + second["height"] + min_gap <= first["y"]
+        )
 
     def _geometry_summary(self, shape: Any) -> dict[str, Any]:
         solids = self._safe_sequence(shape, "Solids")

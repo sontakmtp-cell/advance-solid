@@ -34,6 +34,9 @@ class FakeComError(Exception):
 
 
 class FakeDocument:
+    def __call__(self) -> None:
+        raise RuntimeError("COM dispatch objects are not methods")
+
     def GetTitle(self) -> str:
         return "Part1"
 

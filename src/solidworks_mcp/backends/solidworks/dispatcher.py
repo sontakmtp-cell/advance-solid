@@ -238,12 +238,17 @@ class SolidWorksComDispatcher:
             raise _dependency_or_attach_error(win32_exc) from win32_exc
 
     def _app_info(self, sw: Any) -> dict[str, Any]:
+        active_doc = _safe_property(sw, "ActiveDoc")
+        if active_doc is None:
+            active_doc = _safe_property(sw, "IActiveDoc2")
+        if active_doc is None:
+            active_doc = _safe_call(sw, "GetActiveDoc")
         return {
             "attached": True,
             "visible": _safe_getattr(sw, "Visible"),
             "revision": _safe_call(sw, "RevisionNumber"),
             "version": _safe_call(sw, "VersionHistory") or _safe_call(sw, "RevisionNumber"),
-            "active_document_title": _safe_call(_safe_call(sw, "ActiveDoc"), "GetTitle"),
+            "active_document_title": _safe_call(active_doc, "GetTitle"),
         }
 
     def _to_mcp_error(self, operation: str, exc: Exception) -> McpCadError:
@@ -414,6 +419,15 @@ def _safe_call(obj: Any, method: str, *args: Any) -> Any:
     try:
         candidate = getattr(obj, method)
         return candidate(*args) if callable(candidate) else candidate
+    except Exception:
+        return None
+
+
+def _safe_property(obj: Any, attr: str) -> Any:
+    if obj is None:
+        return None
+    try:
+        return getattr(obj, attr)
     except Exception:
         return None
 

@@ -52,6 +52,63 @@ class SolidWorksDrawingService:
         self.sw_app = sw_app
         self.options = options or DrawingServiceOptions()
 
+    def drawing_operation(
+        self,
+        operation: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Route the shared MCP drawing_operation shape to domain methods.
+
+        The schema boundary intentionally stays broad (`parameters: dict`) so
+        this router validates the Phase 2 drawing subtypes close to the COM
+        calls and returns errors that tell an agent how to recover.
+        """
+
+        params = parameters or {}
+        try:
+            if operation == "create_from_model":
+                return self.create_drawing_from_model(
+                    self._required_text(params, "model_path"),
+                    template_path=self._optional_text(params, "template_path"),
+                    model_view=str(
+                        params.get("model_view") or params.get("view_name") or "*Front"
+                    ),
+                    x=self._number(params, "x", 0.25),
+                    y=self._number(params, "y", 0.25),
+                )
+            if operation == "insert_view":
+                return self._route_insert_view(params)
+            if operation == "add_dimension":
+                return self._route_add_dimension(params)
+            if operation == "add_annotation":
+                return self._route_add_annotation(params)
+            if operation == "insert_bom":
+                action = str(params.get("action") or "insert").lower()
+                if action in {"update", "refresh"}:
+                    return self.update_bom()
+                return self.insert_bom(
+                    table_template=self._optional_text(params, "table_template"),
+                    x=self._number(params, "x", 0.02),
+                    y=self._number(params, "y", 0.02),
+                    anchor_type=self._int_number(params, "anchor_type", 1),
+                    bom_type=self._int_number(params, "bom_type", 1),
+                )
+            if operation == "validate_layout":
+                return self.validate_layout(params)
+            if operation == "title_block":
+                return self._route_title_block(params)
+            if operation == "sheet_management":
+                return self._route_sheet_management(params)
+            raise self._failure(
+                ErrorCode.UNSUPPORTED,
+                f"Drawing operation '{operation}' is not supported by the drawing domain service.",
+                "Use one of: create_from_model, insert_view, add_dimension, add_annotation, "
+                "insert_bom, validate_layout, title_block, sheet_management.",
+                {"operation": operation},
+            )
+        except Exception as exc:
+            return error_response(exc)
+
     def create_drawing_from_model(
         self,
         model_path: str,
@@ -83,6 +140,12 @@ class SolidWorksDrawingService:
                 )
 
             view = self._create_model_view(drawing, model_path, model_view, x, y)
+            self._require_created(
+                view,
+                "initial drawing view",
+                "Verify model_path and model_view are valid for SolidWorks, then retry create_from_model.",
+                {"model_path": model_path, "model_view": model_view},
+            )
             return self._ok(
                 "drawing_created",
                 document=self._document_summary(drawing),
@@ -107,6 +170,12 @@ class SolidWorksDrawingService:
         def operation() -> dict[str, Any]:
             drawing = self._drawing_doc(drawing_doc)
             view = self._create_model_view(drawing, model_path, view_name, x, y)
+            self._require_created(
+                view,
+                "model drawing view",
+                "Verify the model file is openable by SolidWorks and use a view such as *Front or *Isometric.",
+                {"model_path": model_path, "view_name": view_name},
+            )
             return self._ok("model_view_inserted", view=self._view_summary(view), model_path=model_path)
 
         return self._run(operation)
@@ -138,6 +207,12 @@ class SolidWorksDrawingService:
                 y,
                 int(direction_id),
             )
+            self._require_created(
+                view,
+                "projected drawing view",
+                "Select a parent drawing view before inserting a projected view, then retry.",
+                {"direction": direction, "x": x, "y": y},
+            )
             return self._ok("projected_view_inserted", view=self._view_summary(view), direction=direction)
 
         return self._run(operation)
@@ -161,6 +236,12 @@ class SolidWorksDrawingService:
                 y,
                 label,
             )
+            self._require_created(
+                view,
+                "section drawing view",
+                "Create/select a section line in the source view before inserting the section view.",
+                {"label": label, "x": x, "y": y},
+            )
             return self._ok("section_view_inserted", view=self._view_summary(view), label=label)
 
         return self._run(operation)
@@ -181,6 +262,12 @@ class SolidWorksDrawingService:
             drawing = self._drawing_doc(drawing_doc)
             args: tuple[Any, ...] = (x, y, radius, label) if scale is None else (x, y, radius, label, scale)
             view = self._call_any(drawing, ("CreateDetailViewAt3", "CreateDetailViewAt2"), *args)
+            self._require_created(
+                view,
+                "detail drawing view",
+                "Create/select a detail circle or profile in the source view before inserting the detail view.",
+                {"label": label, "radius": radius, "scale": scale},
+            )
             return self._ok(
                 "detail_view_inserted",
                 view=self._view_summary(view),
@@ -204,6 +291,12 @@ class SolidWorksDrawingService:
         def operation() -> dict[str, Any]:
             drawing = self._drawing_doc(drawing_doc)
             view = self._call_any(drawing, ("CreateAuxiliaryViewAt3", "CreateAuxiliaryViewAt2"), x, y, label)
+            self._require_created(
+                view,
+                "auxiliary drawing view",
+                "Select an edge/reference in the source view before inserting the auxiliary view.",
+                {"label": label, "x": x, "y": y},
+            )
             return self._ok("auxiliary_view_inserted", view=self._view_summary(view), label=label)
 
         return self._run(operation)
@@ -230,7 +323,17 @@ class SolidWorksDrawingService:
     ) -> dict[str, Any]:
         """Add an ordinate dimension for the current selection."""
 
-        type_id = 1 if ordinate_type.lower() == "horizontal" else 2
+        normalized = ordinate_type.lower()
+        if normalized not in {"horizontal", "vertical"}:
+            return error_response(
+                self._failure(
+                    ErrorCode.INVALID_INPUT,
+                    f"Unknown ordinate dimension type '{ordinate_type}'.",
+                    "Use ordinate_type='horizontal' or ordinate_type='vertical'.",
+                    {"ordinate_type": ordinate_type},
+                )
+            )
+        type_id = 1 if normalized == "horizontal" else 2
         return self._add_dimension(
             "ordinate_dimension_added",
             ("AddOrdinateDimension2", "AddOrdinateDimension"),
@@ -431,6 +534,48 @@ class SolidWorksDrawingService:
 
         return self._run(operation)
 
+    def validate_layout(self, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Score simple drawing layout constraints from supplied sheet, view, and dimension boxes."""
+
+        params = parameters or {}
+        sheet = params.get("sheet") if isinstance(params.get("sheet"), dict) else {}
+        width = self._positive_number(sheet, "width", 1.0)
+        height = self._positive_number(sheet, "height", 1.0)
+        dimensions = self._box_list(params.get("dimensions"), "dimensions")
+        views = self._box_list(params.get("views"), "views")
+        min_gap = self._positive_number(params, "min_gap", 0.0, allow_zero=True)
+        issues: list[dict[str, Any]] = []
+
+        for box in dimensions + views:
+            if box["x"] < 0 or box["y"] < 0 or box["x"] + box["width"] > width or box["y"] + box["height"] > height:
+                issues.append(
+                    {
+                        "code": "outside_sheet",
+                        "item": box["id"],
+                        "next_step": "Move the item inside the sheet boundary.",
+                    }
+                )
+
+        for index, first in enumerate(dimensions):
+            for second in dimensions[index + 1 :]:
+                if self._boxes_overlap(first, second, min_gap):
+                    issues.append(
+                        {
+                            "code": "dimension_overlap",
+                            "items": [first["id"], second["id"]],
+                            "next_step": "Reposition one dimension or increase spacing.",
+                        }
+                    )
+
+        score = max(0, 100 - 15 * len(issues))
+        return self._ok(
+            "layout_validated",
+            score=score,
+            issue_count=len(issues),
+            issues=issues,
+            sheet={"width": width, "height": height},
+        )
+
     def read_title_block(self, *, drawing_doc: Any | None = None) -> dict[str, Any]:
         """Read editable title block notes from the current sheet."""
 
@@ -575,6 +720,12 @@ class SolidWorksDrawingService:
         def operation() -> dict[str, Any]:
             drawing = self._drawing_doc(drawing_doc)
             dimension = self._call_any(drawing, method_names, *args)
+            self._require_created(
+                dimension,
+                event.replace("_", " "),
+                "Select the required drawing geometry first, then retry the dimension operation with placement coordinates.",
+                {"methods": list(method_names), "args": args},
+            )
             return self._ok(event, dimension=self._dimension_summary(dimension), **extra)
 
         return self._run(operation)
@@ -592,10 +743,183 @@ class SolidWorksDrawingService:
         def operation() -> dict[str, Any]:
             drawing = self._drawing_doc(drawing_doc)
             annotation = self._call_any(drawing, method_names, *args)
+            self._require_created(
+                annotation,
+                event.replace("_", " "),
+                "Select the required drawing entity first, then retry the annotation operation.",
+                {"methods": list(method_names), "args": args},
+            )
             self._position_annotation(annotation, x, y)
             return self._ok(event, annotation=self._annotation_summary(annotation), **extra)
 
         return self._run(operation)
+
+    def _route_insert_view(self, params: dict[str, Any]) -> dict[str, Any]:
+        view_type = str(params.get("view_type") or params.get("type") or "model").lower()
+        if view_type == "model":
+            return self.insert_model_view(
+                self._required_text(params, "model_path"),
+                view_name=str(params.get("view_name") or params.get("model_view") or "*Front"),
+                x=self._number(params, "x", 0.25),
+                y=self._number(params, "y", 0.25),
+            )
+        if view_type == "projected":
+            return self.insert_projected_view(
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+                direction=str(params.get("direction") or "right"),
+            )
+        if view_type == "section":
+            return self.insert_section_view(
+                label=str(params.get("label") or "A"),
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+            )
+        if view_type == "detail":
+            return self.insert_detail_view(
+                label=str(params.get("label") or "A"),
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+                radius=self._number(params, "radius"),
+                scale=self._optional_number(params, "scale"),
+            )
+        if view_type == "auxiliary":
+            return self.insert_auxiliary_view(
+                label=str(params.get("label") or "A"),
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+            )
+        return error_response(
+            self._failure(
+                ErrorCode.UNSUPPORTED,
+                f"Drawing view type '{view_type}' is not supported.",
+                "Use view_type='model', 'projected', 'section', 'detail', or 'auxiliary'.",
+                {"view_type": view_type},
+            )
+        )
+
+    def _route_add_dimension(self, params: dict[str, Any]) -> dict[str, Any]:
+        dimension_type = str(
+            params.get("dimension_type") or params.get("type") or "smart"
+        ).lower()
+        if dimension_type == "smart":
+            return self.add_smart_dimension(
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+                z=self._number(params, "z", 0.0),
+            )
+        if dimension_type == "ordinate":
+            return self.add_ordinate_dimension(
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+                ordinate_type=str(params.get("ordinate_type") or "horizontal"),
+            )
+        if dimension_type == "chamfer":
+            return self.add_chamfer_dimension(
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+            )
+        if dimension_type in {"hole_callout", "hole-callout", "hole"}:
+            return self.add_hole_callout(
+                x=self._number(params, "x"),
+                y=self._number(params, "y"),
+            )
+        return error_response(
+            self._failure(
+                ErrorCode.UNSUPPORTED,
+                f"Drawing dimension type '{dimension_type}' is not supported.",
+                "Use dimension_type='smart', 'ordinate', 'chamfer', or 'hole_callout'.",
+                {"dimension_type": dimension_type},
+            )
+        )
+
+    def _route_add_annotation(self, params: dict[str, Any]) -> dict[str, Any]:
+        annotation_type = str(params.get("annotation_type") or params.get("type") or "note").lower()
+        x = self._optional_number(params, "x")
+        y = self._optional_number(params, "y")
+        if annotation_type == "note":
+            return self.add_note(self._required_text(params, "text"), x=x, y=y)
+        if annotation_type == "balloon":
+            return self.add_balloon(
+                x=x,
+                y=y,
+                style=self._int_number(params, "style", 1),
+                size=self._int_number(params, "size", 1),
+            )
+        if annotation_type == "surface_finish":
+            return self.add_surface_finish(self._required_text(params, "symbol"), x=x, y=y)
+        if annotation_type == "weld":
+            return self.add_weld_symbol(self._required_text(params, "symbol"), x=x, y=y)
+        if annotation_type in {"gdt", "geometric_tolerance"}:
+            frame_text = str(params.get("frame_text") or params.get("text") or "")
+            if not frame_text:
+                raise self._failure(
+                    ErrorCode.INVALID_INPUT,
+                    "frame_text is required for a GD&T annotation.",
+                    "Pass frame_text using the notation expected by your SolidWorks "
+                    "macro/API path, for example '|POSITION|0.1|A|B|'.",
+                )
+            return self.add_geometric_tolerance(frame_text, x=x, y=y)
+        if annotation_type == "datum":
+            return self.add_datum(self._required_text(params, "label"), x=x, y=y)
+        return error_response(
+            self._failure(
+                ErrorCode.UNSUPPORTED,
+                f"Drawing annotation type '{annotation_type}' is not supported.",
+                "Use annotation_type='note', 'balloon', 'surface_finish', 'weld', "
+                "'gdt', or 'datum'.",
+                {"annotation_type": annotation_type},
+            )
+        )
+
+    def _route_title_block(self, params: dict[str, Any]) -> dict[str, Any]:
+        action = str(params.get("action") or "read").lower()
+        if action == "read":
+            return self.read_title_block()
+        if action in {"write", "update", "set"}:
+            fields = params.get("fields")
+            if not isinstance(fields, dict):
+                return error_response(
+                    self._failure(
+                        ErrorCode.INVALID_INPUT,
+                        "title_block write requires a fields object.",
+                        "Pass parameters={'action': 'write', 'fields': {'TITLE': 'Bracket'}}.",
+                        {"fields_type": type(fields).__name__},
+                    )
+                )
+            return self.write_title_block({str(key): str(value) for key, value in fields.items()})
+        return error_response(
+            self._failure(
+                ErrorCode.UNSUPPORTED,
+                f"Title block action '{action}' is not supported.",
+                "Use action='read' or action='write'.",
+                {"action": action},
+            )
+        )
+
+    def _route_sheet_management(self, params: dict[str, Any]) -> dict[str, Any]:
+        action = str(params.get("action") or "list").lower()
+        if action == "list":
+            return self.list_sheets()
+        if action == "add":
+            return self.add_sheet(
+                self._required_text(params, "name"),
+                template_path=self._optional_text(params, "template_path"),
+            )
+        if action in {"activate", "set_active"}:
+            return self.activate_sheet(self._required_text(params, "name"))
+        if action == "delete":
+            return self.delete_sheet(self._required_text(params, "name"))
+        if action in {"set_format", "format"}:
+            return self.set_sheet_format(template_path=self._required_text(params, "template_path"))
+        return error_response(
+            self._failure(
+                ErrorCode.UNSUPPORTED,
+                f"Sheet management action '{action}' is not supported.",
+                "Use action='list', 'add', 'activate', 'delete', or 'set_format'.",
+                {"action": action},
+            )
+        )
 
     def _run(self, operation: Any) -> dict[str, Any]:
         try:
@@ -677,6 +1001,122 @@ class SolidWorksDrawingService:
             return
         annotation = self._call_optional(obj, ("GetAnnotation",)) or obj
         self._call_optional(annotation, ("SetPosition", "SetPosition2"), x, y, 0.0)
+
+    def _require_created(
+        self,
+        obj: Any,
+        entity_name: str,
+        next_step: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if obj is None or obj is False:
+            raise self._failure(
+                ErrorCode.OPERATION_FAILED,
+                f"SolidWorks did not create the {entity_name}.",
+                next_step,
+                details,
+            )
+
+    def _required_text(self, params: dict[str, Any], key: str) -> str:
+        value = self._optional_text(params, key)
+        if value is None:
+            raise self._failure(
+                ErrorCode.INVALID_INPUT,
+                f"{key} is required.",
+                f"Pass a non-empty '{key}' value in parameters.",
+                {"missing": key},
+            )
+        return value
+
+    def _optional_text(self, params: dict[str, Any], key: str) -> str | None:
+        value = params.get(key)
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _number(self, params: dict[str, Any], key: str, default: float | None = None) -> float:
+        value = params.get(key, default)
+        if value is None:
+            raise self._failure(
+                ErrorCode.INVALID_INPUT,
+                f"{key} is required.",
+                f"Pass numeric '{key}' coordinates/values for this drawing operation.",
+                {"missing": key},
+            )
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise self._failure(
+                ErrorCode.INVALID_INPUT,
+                f"{key} must be numeric.",
+                f"Pass '{key}' as an int or float.",
+                {"field": key, "value": value},
+            ) from exc
+
+    def _optional_number(self, params: dict[str, Any], key: str) -> float | None:
+        if key not in params or params.get(key) is None:
+            return None
+        return self._number(params, key)
+
+    def _int_number(self, params: dict[str, Any], key: str, default: int) -> int:
+        return int(self._number(params, key, float(default)))
+
+    def _positive_number(
+        self,
+        params: dict[str, Any],
+        key: str,
+        default: float,
+        *,
+        allow_zero: bool = False,
+    ) -> float:
+        value = self._number(params, key, default)
+        if value < 0 or (value == 0 and not allow_zero):
+            raise self._failure(
+                ErrorCode.INVALID_INPUT,
+                f"{key} must be positive.",
+                f"Pass '{key}' as a positive number.",
+                {"field": key, "value": value},
+            )
+        return value
+
+    def _box_list(self, value: Any, field: str) -> list[dict[str, Any]]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise self._failure(
+                ErrorCode.INVALID_INPUT,
+                f"{field} must be a list of layout boxes.",
+                f"Pass {field} as objects with id, x, y, width, and height.",
+                {"field": field},
+            )
+        boxes: list[dict[str, Any]] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise self._failure(
+                    ErrorCode.INVALID_INPUT,
+                    f"{field}[{index}] must be an object.",
+                    "Use layout boxes shaped like {'id': 'D1', 'x': 0.1, 'y': 0.2, 'width': 0.03, 'height': 0.01}.",
+                    {"field": field, "index": index},
+                )
+            box = {
+                "id": str(item.get("id") or item.get("name") or f"{field}_{index + 1}"),
+                "x": self._number(item, "x"),
+                "y": self._number(item, "y"),
+                "width": self._positive_number(item, "width", 0.0),
+                "height": self._positive_number(item, "height", 0.0),
+            }
+            boxes.append(box)
+        return boxes
+
+    @staticmethod
+    def _boxes_overlap(first: dict[str, Any], second: dict[str, Any], min_gap: float) -> bool:
+        return not (
+            first["x"] + first["width"] + min_gap <= second["x"]
+            or second["x"] + second["width"] + min_gap <= first["x"]
+            or first["y"] + first["height"] + min_gap <= second["y"]
+            or second["y"] + second["height"] + min_gap <= first["y"]
+        )
 
     def _call_any(self, obj: Any, method_names: Iterable[str], *args: Any) -> Any:
         for method_name in method_names:
@@ -810,4 +1250,3 @@ class SolidWorksDrawingService:
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return self._safe_string(value)
-

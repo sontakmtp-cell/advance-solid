@@ -22,6 +22,7 @@ from solidworks_mcp.schemas.modeling import (
     AssemblyOperationInput,
     DrawingOperationInput,
     FeatureOperationInput,
+    PartInspectInput,
     RoutingOperationInput,
     SemanticAnalysisInput,
 )
@@ -100,6 +101,13 @@ def _register(mcp: Any, meta: ToolMeta, func: Callable[..., Any]) -> None:
             mcp.tool(annotations=tool_annotations, **kwargs)(func)
         except TypeError:
             mcp.tool(name=meta.name, description=meta.description)(func)
+
+
+def _validated_request(model: type[Any], response_format: str = "json", **kwargs: Any) -> Any:
+    try:
+        return model(**kwargs)
+    except ValidationError as exc:
+        return validation_error_payload(exc, response_format)
 
 
 def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
@@ -517,12 +525,15 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         parameters: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = FeatureOperationInput(
+        request = _validated_request(
+            FeatureOperationInput,
             backend=backend,
             operation=operation,
             parameters=parameters or {},
             response_format=response_format,
         )
+        if isinstance(request, dict | str):
+            return request
         return await run_tool(
             request,
             backend_factory,
@@ -548,12 +559,15 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         parameters: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = AssemblyOperationInput(
+        request = _validated_request(
+            AssemblyOperationInput,
             backend=backend,
             operation=operation,
             parameters=parameters or {},
             response_format=response_format,
         )
+        if isinstance(request, dict | str):
+            return request
         return await run_tool(
             request,
             backend_factory,
@@ -579,12 +593,15 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         parameters: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = DrawingOperationInput(
+        request = _validated_request(
+            DrawingOperationInput,
             backend=backend,
             operation=operation,
             parameters=parameters or {},
             response_format=response_format,
         )
+        if isinstance(request, dict | str):
+            return request
         return await run_tool(
             request,
             backend_factory,
@@ -610,12 +627,15 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         parameters: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = AppearanceOperationInput(
+        request = _validated_request(
+            AppearanceOperationInput,
             backend=backend,
             operation=operation,
             parameters=parameters or {},
             response_format=response_format,
         )
+        if isinstance(request, dict | str):
+            return request
         return await run_tool(
             request,
             backend_factory,
@@ -678,13 +698,16 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         parameters: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = SemanticAnalysisInput(
+        request = _validated_request(
+            SemanticAnalysisInput,
             backend=backend,
             analysis=analysis,
             detail=detail,
             parameters=parameters or {},
             response_format=response_format,
         )
+        if isinstance(request, dict | str):
+            return request
         return await run_tool(
             request,
             backend_factory,
@@ -704,18 +727,74 @@ def register_all_tools(mcp: Any, backend_factory: BackendFactory) -> Any:
         semantic_analysis,
     )
 
+    async def part_inspect(
+        backend: str = "auto",
+        detail: str = "detailed",
+        include_features: bool = True,
+        include_sub_features: bool = True,
+        include_bodies: bool = True,
+        include_custom_properties: bool = True,
+        feature_limit: int = 250,
+        sub_feature_limit: int = 50,
+        response_format: str = "json",
+    ) -> Any:
+        request = _validated_request(
+            PartInspectInput,
+            backend=backend,
+            detail=detail,
+            include_features=include_features,
+            include_sub_features=include_sub_features,
+            include_bodies=include_bodies,
+            include_custom_properties=include_custom_properties,
+            feature_limit=feature_limit,
+            sub_feature_limit=sub_feature_limit,
+            response_format=response_format,
+        )
+        if isinstance(request, dict | str):
+            return request
+        return await run_tool(
+            request,
+            backend_factory,
+            lambda b, r: call_optional_backend_method(
+                b,
+                "inspect_part",
+                "part.inspect",
+                detail=r.detail,
+                include_features=r.include_features,
+                include_sub_features=r.include_sub_features,
+                include_bodies=r.include_bodies,
+                include_custom_properties=r.include_custom_properties,
+                feature_limit=r.feature_limit,
+                sub_feature_limit=r.sub_feature_limit,
+            ),
+        )
+
+    _register(
+        mcp,
+        ToolMeta(
+            "part_inspect",
+            "Deep-inspect the active SolidWorks part with feature, body, material, mass, bounding-box, and property summaries.",
+            read_only=True,
+            idempotent=True,
+        ),
+        part_inspect,
+    )
+
     async def routing_operation(
         operation: str,
         backend: str = "auto",
         parameters: dict[str, Any] | None = None,
         response_format: str = "json",
     ) -> Any:
-        request = RoutingOperationInput(
+        request = _validated_request(
+            RoutingOperationInput,
             backend=backend,
             operation=operation,
             parameters=parameters or {},
             response_format=response_format,
         )
+        if isinstance(request, dict | str):
+            return request
         return await run_tool(
             request,
             backend_factory,
